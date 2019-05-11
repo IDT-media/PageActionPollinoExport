@@ -1,0 +1,163 @@
+<?php namespace ProcessWire;
+/**
+ * Lister Action - Pollino export
+ *
+ * Exports Pollino vote results as csv
+ *
+ * Copyright:
+ *
+ * Orange Media - Tapio Löytty
+ * Web: www.orange-media.fi
+ *
+ * Authors:
+ *
+ * Tapio Löytty, <tapsa@orange-media.fi>
+ * Web: www.orange-media.fi
+ *
+ * 
+ * ProcessWire 2.x 
+ * Copyright (C) 2014 by Ryan Cramer 
+ * Licensed under GNU/GPL v2, see LICENSE.TXT
+ * 
+ * http://processwire.com
+ *
+ */
+
+class PageActionPollinoExport extends PageAction implements Module {
+
+	const DELIMITER = ',';
+	const ENCLOSURE = '"';
+	const FILENAME = 'pollino-export.csv';
+	const FIELDNAME = 'pollino_export_files';
+
+	public static function getModuleInfo() {
+		return array(
+			'title' => __('Page Action: Pollino export', __FILE__), 
+			'summary' => __('Action that exports Pollino vote results as csv.'), 
+			'version' => 001, 
+			'author' => 'Tapio Löytty', 
+			"requires" => "Pollino>=0.0.2", 
+			'permission' => 'page-action-pollino-export', 
+			'permissions' => array('page-action-pollino-export' => 'Page Action: Pollino export'),
+			); 
+	}
+
+	public function __construct() {
+		$this->set('delimiter', self::DELIMITER);
+		$this->set('enclosure', self::ENCLOSURE);
+		$this->set('filename', self::FILENAME);
+	}
+
+	protected function ___action($item) {
+
+		$results = $this->wire('modules')->get('Pollino')->getVoteResults($item);
+		if(!count($results)) {
+			$this->error(sprintf($this->_("No results for item: %s", $item->title)));
+			return false;
+		}
+
+		$headers = [
+			'text',
+			'count',
+			'percent'
+		];
+
+		$rows = [];
+		$rows[] = $headers;
+
+		foreach ($results as $set) {
+			$row = [];
+
+			$row[] = $set['vote_text'];
+			$row[] = $set['vote_count'];
+			$row[] = $set['vote_percent'];
+
+			$rows[] = $row;
+		}
+
+		$path = new WireTempDir('pollino_export');
+		$filename = $path . $this->wire('sanitizer')->fileName($this->filename);
+
+		if(($fp = fopen($filename, 'w')) !== FALSE) {
+
+			foreach($rows as $row) {
+				fputcsv($fp, $row, $this->delimiter, $this->enclosure); // TODO: sanitize
+			}
+
+			if(fclose($fp)) {
+				$files = $item->get(self::FIELDNAME);
+				$file = new Pagefile($files, $filename);
+				$files->add($file);
+				$this->message(sprintf("%s: <a href='{$file->url}'>{$item->title}</a>", $this->_('Download CSV')));
+				return true;
+			}
+		}
+
+		return false; 	
+	}
+
+	public function ___install() {
+
+		$fields = $this->wire('fields');
+
+		if(!$fields->get(self::FIELDNAME)) {
+			$field = new Field();
+			$field->type = $this->modules->get('FieldtypeFile');
+			$field->name = self::FIELDNAME;
+			$field->label = $this->_('Exported Files');
+			$field->extensions = 'csv';
+			$field->descriptionRows = 0;
+			$field->save();
+		}		
+
+		$template = $this->templates->get("pollino_poll");
+		if($template instanceof Template) {
+			$template->fields->add(self::FIELDNAME);
+			$template->fields->save();
+		}
+	}
+
+	public function ___uninstall() {
+
+		$fields = $this->wire('fields');
+		$templates = $this->wire('templates');
+
+		foreach($templates as $template) {
+			
+			if(!$template->hasField(self::FIELDNAME)) 
+				continue;
+
+			$template->fields->remove(self::FIELDNAME);
+			$template->fields->save();
+		}
+
+		$fields->delete($fields->get(self::FIELDNAME));
+	}
+
+	public function ___getConfigInputfields() {
+		$fieldset = parent::___getConfigInputfields();
+
+		$f = $this->wire('modules')->get('InputfieldText'); 
+		$f->attr('name', 'filename'); 
+		$f->attr('value', $this->filename); 
+		$f->label = $this->_('Filename'); 
+		$fieldset->add($f); 
+
+		$f = $this->wire('modules')->get('InputfieldText'); 
+		$f->attr('name', 'delimiter'); 
+		$f->attr('value', $this->delimiter); 
+		$f->label = $this->_('Delimiter'); 
+		$f->columnWidth = 50; 
+		$fieldset->add($f); 
+
+		$f = $this->wire('modules')->get('InputfieldText'); 
+		$f->attr('name', 'enclosure'); 
+		$f->attr('value', $this->enclosure); 
+		$f->label = $this->_('Enclosure'); 
+		$f->columnWidth = 50; 
+		$fieldset->add($f); 
+
+		return $fieldset; 
+	}
+}
+
